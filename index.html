@@ -1,0 +1,483 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Angry Rabbits: Cursed Edition</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;background:#100819;color:white;font-family:Arial,sans-serif;text-align:center}
+header{padding:12px}
+h1{margin:5px;color:#ff536d;text-shadow:0 0 15px #ff174f}
+p{color:#d8c6e9}
+button{padding:10px 16px;margin:5px;border:0;border-radius:7px;background:#ff536d;color:#210b1d;font-weight:bold;cursor:pointer}
+canvas{display:block;width:min(100%,1100px);height:auto;margin:auto;border:2px solid #693c70;border-radius:8px;touch-action:none}
+#status{min-height:22px;color:#ffb5c5;font-weight:bold}
+</style>
+</head>
+<body>
+<header>
+<h1>🐰 ANGRY RABBITS 🥕</h1>
+<p>CURSED EDITION — Pull back, aim, and release!</p>
+<div id="status">Knock down the carrots and defeat the hawks!</div>
+<button onclick="resetGame()">Restart Level</button>
+<button onclick="nextLevel()">Next Level</button>
+</header>
+
+<canvas id="game" width="1100" height="600"></canvas>
+
+<script>
+const canvas=document.getElementById("game");
+const ctx=canvas.getContext("2d");
+const statusText=document.getElementById("status");
+const G=0.34, ground=490, sling={x:175,y:405};
+
+let rabbits=[],blocks=[],hawks=[];
+let level=0,dragging=false,active=null,shots=0;
+let won=false,gameOver=false;
+let lastTime=0;
+
+const layouts=[
+ [{x:635,rows:3,cols:3},{x:850,rows:3,cols:3}],
+ [{x:575,rows:3,cols:3},{x:770,rows:4,cols:3},{x:960,rows:3,cols:2}],
+ [{x:530,rows:4,cols:3},{x:730,rows:4,cols:3},{x:930,rows:3,cols:3}]
+];
+
+function resetGame(){
+ rabbits=[];blocks=[];hawks=[];
+ dragging=false;active=null;shots=0;won=false;gameOver=false;
+
+ rabbits.push({
+  x:sling.x,y:sling.y,vx:0,vy:0,r:19,
+  flying:false,alive:true,used:false
+ });
+
+ for(const t of layouts[level]){
+  const w=43,h=34;
+
+  for(let row=0;row<t.rows;row++){
+   for(let col=0;col<t.cols;col++){
+    blocks.push({
+     x:t.x+col*(w+2),y:ground-(row+1)*h,
+     w,h,vx:0,vy:0,angle:0,alive:true,cap:false
+    });
+   }
+  }
+
+  blocks.push({
+   x:t.x+t.cols*(w+2)/2-20,
+   y:ground-(t.rows+1)*h-8,w:40,h:31,
+   vx:0,vy:0,angle:0,alive:true,cap:true
+  });
+
+  hawks.push({
+   x:t.x+t.cols*(w+2)/2,
+   y:ground-t.rows*h/2,vx:0,vy:0,r:17,alive:true
+  });
+ }
+
+ statusText.textContent="Knock down the carrots and defeat the hawks!";
+}
+
+function nextLevel(){
+ level=(level+1)%layouts.length;
+ resetGame();
+}
+
+function background(){
+ const g=ctx.createLinearGradient(0,0,0,600);
+ g.addColorStop(0,"#100720");
+ g.addColorStop(.65,"#35143f");
+ g.addColorStop(1,"#110a1b");
+ ctx.fillStyle=g;ctx.fillRect(0,0,1100,600);
+
+ // Blood moon
+ ctx.save();
+ ctx.shadowColor="#ff174f";ctx.shadowBlur=32;
+ ctx.fillStyle="#92233f";
+ ctx.beginPath();ctx.arc(850,105,55,0,Math.PI*2);ctx.fill();
+ ctx.restore();
+
+ ctx.fillStyle="#5d1831";
+ ctx.beginPath();ctx.arc(830,88,10,0,Math.PI*2);ctx.fill();
+ ctx.beginPath();ctx.arc(870,124,8,0,Math.PI*2);ctx.fill();
+
+ // Stars
+ for(let i=0;i<65;i++){
+  ctx.fillStyle=i%4===0?"#ff829a":"#d8c6ff";
+  ctx.globalAlpha=.4+(i%4)*.15;
+  ctx.fillRect((i*173+31)%1100,(i*97+19)%300,2,2);
+ }
+ ctx.globalAlpha=1;
+
+ // Haunted trees
+ ctx.fillStyle="#0b0816";
+ for(let i=0;i<10;i++){
+  const x=i*135-20;
+  ctx.fillRect(x,330,17,175);
+  ctx.beginPath();
+  ctx.moveTo(x-52,390);ctx.lineTo(x+8,275);ctx.lineTo(x+57,390);
+  ctx.fill();
+  ctx.beginPath();
+  ctx.moveTo(x-40,350);ctx.lineTo(x+8,245);ctx.lineTo(x+46,350);
+  ctx.fill();
+ }
+
+ // Mist
+ for(let i=0;i<5;i++){
+  ctx.fillStyle="rgba(180,105,200,.05)";
+  ctx.beginPath();
+  ctx.ellipse((i*270+performance.now()*.008)%1300-100,
+   465+i%2*18,180,20,0,0,Math.PI*2);
+  ctx.fill();
+ }
+
+ ctx.fillStyle="#171023";ctx.fillRect(0,ground,1100,110);
+ ctx.fillStyle="#563052";ctx.fillRect(0,ground,1100,5);
+}
+
+function drawSlingshot(){
+ ctx.strokeStyle="#69422f";ctx.lineWidth=12;ctx.lineCap="round";
+ ctx.beginPath();
+ ctx.moveTo(175,490);ctx.lineTo(175,405);
+ ctx.lineTo(150,375);
+ ctx.moveTo(175,405);ctx.lineTo(198,375);
+ ctx.stroke();
+
+ // Elastic bands
+ if(dragging&&active){
+  ctx.strokeStyle="#dca0b0";ctx.lineWidth=4;
+  ctx.beginPath();
+  ctx.moveTo(150,375);ctx.lineTo(active.x,active.y);
+  ctx.moveTo(198,375);ctx.lineTo(active.x,active.y);
+  ctx.stroke();
+ }
+}
+
+function drawRabbit(r){
+ if(!r.alive)return;
+ ctx.save();
+ ctx.translate(r.x,r.y);
+ ctx.rotate(r.flying?Math.atan2(r.vy,r.vx)*.18:0);
+
+ // Ears
+ ctx.fillStyle="#b8b4c9";
+ ctx.beginPath();
+ ctx.ellipse(-8,-23,7,17,-.2,0,Math.PI*2);
+ ctx.ellipse(8,-24,7,17,.2,0,Math.PI*2);
+ ctx.fill();
+
+ ctx.fillStyle="#7b233f";
+ ctx.beginPath();
+ ctx.ellipse(-8,-24,3,11,-.2,0,Math.PI*2);
+ ctx.ellipse(8,-25,3,11,.2,0,Math.PI*2);
+ ctx.fill();
+
+ // Body and head
+ ctx.fillStyle="#d7d1e4";
+ ctx.beginPath();ctx.ellipse(0,5,19,18,0,0,Math.PI*2);ctx.fill();
+ ctx.beginPath();ctx.arc(0,-8,15,0,Math.PI*2);ctx.fill();
+
+ // Glowing red eyes
+ ctx.save();
+ ctx.shadowColor="#ff173f";ctx.shadowBlur=13;
+ ctx.fillStyle="#ff163f";
+ ctx.beginPath();
+ ctx.ellipse(-6,-10,3.2,4,0,0,Math.PI*2);
+ ctx.ellipse(6,-10,3.2,4,0,0,Math.PI*2);
+ ctx.fill();
+ ctx.restore();
+
+ ctx.fillStyle="#301525";
+ ctx.beginPath();ctx.arc(0,-3,3,0,Math.PI*2);ctx.fill();
+ ctx.restore();
+}
+
+function drawCarrot(b){
+ if(!b.alive)return;
+ ctx.save();
+ ctx.translate(b.x+b.w/2,b.y+b.h/2);
+ ctx.rotate(b.angle);
+
+ if(b.cap){
+  ctx.fillStyle="#ff7a27";
+  ctx.beginPath();
+  ctx.moveTo(-19,8);ctx.lineTo(19,8);ctx.lineTo(0,19);
+  ctx.closePath();ctx.fill();
+
+  ctx.fillStyle="#53c45a";
+  ctx.beginPath();
+  ctx.moveTo(0,9);ctx.lineTo(-11,-4);ctx.lineTo(-2,2);
+  ctx.lineTo(5,-8);ctx.lineTo(5,5);ctx.lineTo(14,-2);
+  ctx.lineTo(5,12);ctx.closePath();ctx.fill();
+ }else{
+  ctx.fillStyle="#f77a22";
+  ctx.beginPath();
+  ctx.moveTo(-b.w/2,-b.h/2);
+  ctx.lineTo(b.w/2,-b.h/2);
+  ctx.lineTo(b.w/2-5,b.h/2);
+  ctx.lineTo(-b.w/2+5,b.h/2);
+  ctx.closePath();ctx.fill();
+
+  ctx.strokeStyle="#ffb24d";ctx.lineWidth=2;
+  for(let i=0;i<3;i++){
+   ctx.beginPath();
+   ctx.moveTo(-12+i*11,-8);ctx.lineTo(-9+i*11,-3);
+   ctx.stroke();
+  }
+  ctx.fillStyle="#43a84f";ctx.fillRect(-5,-b.h/2-5,10,7);
+ }
+ ctx.restore();
+}
+
+function drawHawk(h){
+ if(!h.alive)return;
+ const flap=Math.sin(performance.now()*.012)*9;
+ ctx.save();ctx.translate(h.x,h.y);
+
+ ctx.fillStyle="#29263e";
+ ctx.beginPath();ctx.ellipse(-10,-7,13,6,-.5,0,Math.PI*2);ctx.fill();
+ ctx.beginPath();ctx.ellipse(10,-7,13,6,.5,0,Math.PI*2);ctx.fill();
+
+ ctx.fillStyle="#54465e";
+ ctx.beginPath();
+ ctx.ellipse(-12,-12,13,5,-.4+flap*.025,0,Math.PI*2);
+ ctx.ellipse(12,-12,13,5,.4-flap*.025,0,Math.PI*2);
+ ctx.fill();
+
+ ctx.fillStyle="#393047";
+ ctx.beginPath();ctx.ellipse(0,0,17,15,0,0,Math.PI*2);ctx.fill();
+ ctx.fillStyle="#62536d";
+ ctx.beginPath();ctx.arc(0,-8,12,0,Math.PI*2);ctx.fill();
+
+ ctx.save();ctx.shadowColor="#ff174f";ctx.shadowBlur=12;
+ ctx.fillStyle="#ff174f";
+ ctx.beginPath();
+ ctx.arc(-5,-9,3,0,Math.PI*2);
+ ctx.arc(5,-9,3,0,Math.PI*2);
+ ctx.fill();ctx.restore();
+
+ ctx.fillStyle="#ffb13b";
+ ctx.beginPath();ctx.moveTo(-4,-2);ctx.lineTo(4,-2);ctx.lineTo(0,5);ctx.closePath();ctx.fill();
+ ctx.restore();
+}
+
+function drawAim(){
+ if(!dragging||!active)return;
+
+ // Dotted aiming prediction appears ONLY while pulling the rabbit.
+ const dx=sling.x-active.x,dy=sling.y-active.y;
+ ctx.save();
+ ctx.setLineDash([6,8]);
+ ctx.strokeStyle="#ff5977";ctx.lineWidth=3;
+ ctx.beginPath();ctx.moveTo(active.x,active.y);
+
+ for(let i=1;i<=22;i++){
+  const t=i*.24;
+  const x=active.x+dx*.2*t;
+  const y=active.y+dy*.2*t+.5*G*t*t*10;
+  ctx.lineTo(x,y);
+ }
+ ctx.stroke();
+ ctx.restore();
+}
+
+function draw(){
+ background();
+ drawSlingshot();
+
+ for(const b of blocks)drawCarrot(b);
+ for(const h of hawks)drawHawk(h);
+ for(const r of rabbits)drawRabbit(r);
+
+ // There is deliberately NO rabbit flight-trail drawing here.
+ // The dotted aiming line is only visible during dragging.
+ drawAim();
+
+ ctx.fillStyle="#f6d8e8";
+ ctx.font="bold 17px Arial";
+ ctx.fillText("LEVEL "+(level+1),20,30);
+ ctx.fillText("SHOTS: "+shots,20,54);
+
+ if(won||gameOver){
+  ctx.fillStyle="rgba(10,4,20,.72)";
+  ctx.fillRect(0,0,1100,600);
+  ctx.textAlign="center";
+  ctx.fillStyle=won?"#7dffab":"#ff718b";
+  ctx.font="bold 44px Arial";
+  ctx.fillText(won?"LEVEL CLEARED!":"TRY AGAIN!",550,260);
+  ctx.fillStyle="white";ctx.font="22px Arial";
+  ctx.fillText(won?"The curse grows stronger...":"Restart the level to try again.",550,305);
+  ctx.textAlign="left";
+ }
+}
+
+function circleRectHit(x,y,r,b){
+ const cx=Math.max(b.x,Math.min(x,b.x+b.w));
+ const cy=Math.max(b.y,Math.min(y,b.y+b.h));
+ return Math.hypot(x-cx,y-cy)<r;
+}
+
+function update(dt){
+ const step=Math.min(dt/16.67,2);
+
+ for(const r of rabbits){
+  if(!r.alive||!r.flying)continue;
+
+  r.vy+=G*step;
+  r.x+=r.vx*step;
+  r.y+=r.vy*step;
+  r.vx*=Math.pow(.998,step);
+
+  // Collision with carrots
+  for(const b of blocks){
+   if(!b.alive||!circleRectHit(r.x,r.y,r.r,b))continue;
+   b.vx+=r.vx*.45;
+   b.vy+=r.vy*.35;
+   b.settled=false;
+   b.alive=false;
+   r.vx*=.82;
+   r.vy*=.82;
+  }
+
+  // Collision with hawks
+  for(const h of hawks){
+   if(!h.alive)continue;
+   if(Math.hypot(r.x-h.x,r.y-h.y)<r.r+h.r){
+    h.alive=false;
+    r.vx*=.7;r.vy*=.7;
+   }
+  }
+
+  if(r.y>ground-r.r){
+   r.y=ground-r.r;
+   r.vy*=-.28;
+   r.vx*=.72;
+   if(Math.abs(r.vy)<1.2)r.vy=0;
+  }
+
+  if(r.x>1150||r.x< -80||r.y>680){
+   r.alive=false;
+  }
+ }
+
+ // Simple falling and bouncing blocks
+ for(const b of blocks){
+  if(!b.alive)continue;
+
+  const supported=blocks.some(other=>
+   other!==b&&other.alive&&
+   Math.abs((b.x+b.w/2)-(other.x+other.w/2))<(b.w+other.w)/2-3&&
+   Math.abs((b.y+b.h)-other.y)<4
+  );
+
+  if(!supported&&b.y+b.h<ground-1)b.settled=false;
+
+  if(!b.settled){
+   b.vy+=G*step;
+   b.x+=b.vx*step;
+   b.y+=b.vy*step;
+   b.angle+=b.vx*.002*step;
+   b.vx*=Math.pow(.99,step);
+
+   if(b.y+b.h>=ground){
+    b.y=ground-b.h;b.vy*=-.18;b.vx*=.72;
+    if(Math.abs(b.vy)<.8){
+     b.vy=0;b.settled=true;
+    }
+   }
+  }
+ }
+
+ for(const h of hawks){
+  if(!h.alive)continue;
+  const hit=blocks.some(b=>b.alive&&circleRectHit(h.x,h.y,h.r,b));
+  if(hit){
+   // Hawks remain inside their towers until struck by the rabbit
+  }
+ }
+
+ if(hawks.every(h=>!h.alive)){
+  won=true;
+  statusText.textContent="You defeated the hawks! Click Next Level.";
+ }else if(!rabbits.some(r=>r.alive&&!r.flying)&&!won){
+  gameOver=true;
+  statusText.textContent="Out of rabbits! Restart the level to try again.";
+ }
+}
+
+function frame(time){
+ const dt=lastTime?time-lastTime:16.67;
+ lastTime=time;
+ if(!won&&!gameOver)update(dt);
+ draw();
+ requestAnimationFrame(frame);
+}
+
+function pointerPos(e){
+ const rect=canvas.getBoundingClientRect();
+ return {
+  x:(e.clientX-rect.left)*canvas.width/rect.width,
+  y:(e.clientY-rect.top)*canvas.height/rect.height
+ };
+}
+
+canvas.addEventListener("pointerdown",e=>{
+ if(won||gameOver)return;
+ const p=pointerPos(e);
+ const r=rabbits.find(r=>r.alive&&!r.flying&&!r.used&&
+  Math.hypot(p.x-r.x,p.y-r.y)<35);
+ if(r){
+  active=r;dragging=true;
+  canvas.setPointerCapture(e.pointerId);
+ }
+});
+
+canvas.addEventListener("pointermove",e=>{
+ if(!dragging||!active)return;
+ const p=pointerPos(e);
+ const dx=p.x-sling.x,dy=p.y-sling.y;
+ const distance=Math.hypot(dx,dy),max=90;
+ if(distance>max){
+  active.x=sling.x+dx/distance*max;
+  active.y=sling.y+dy/distance*max;
+ }else{
+  active.x=p.x;active.y=p.y;
+ }
+});
+
+function releaseRabbit(){
+ if(!dragging||!active)return;
+ dragging=false;
+ const r=active;active=null;
+ const dx=sling.x-r.x,dy=sling.y-r.y;
+
+ if(Math.hypot(dx,dy)<10){
+  r.x=sling.x;r.y=sling.y;
+  return;
+ }
+
+ r.vx=dx*.19;
+ r.vy=dy*.19;
+ r.flying=true;r.used=true;
+ shots++;
+
+ if(!rabbits.some(other=>!other.used)){
+  if(shots<3){
+   rabbits.push({
+    x:sling.x,y:sling.y,vx:0,vy:0,r:19,
+    flying:false,alive:true,used:false
+   });
+  }
+ }
+}
+
+canvas.addEventListener("pointerup",releaseRabbit);
+canvas.addEventListener("pointercancel",releaseRabbit);
+
+resetGame();
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
